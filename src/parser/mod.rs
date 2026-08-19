@@ -1,11 +1,10 @@
 mod tokens;
 
 use crate::paper::{Dictionary, ObjectRef, PdfObject};
-use crate::parser::ParseError::UnexpectedEndOfTokens;
 use crate::parser::tokens::{Token, TokenIter};
 use std::fmt::Display;
 use std::fs::File;
-use std::io;
+use std::io::{self, BufReader};
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -22,8 +21,8 @@ impl Display for ParseError {
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-pub fn parse_dictionary(file: &mut File) -> Result<Dictionary, ParseError> {
-    let mut token_iter = TokenIter::new(file);
+pub fn parse_dictionary(reader: &mut BufReader<File>) -> Result<Dictionary, ParseError> {
+    let mut token_iter = TokenIter::new(reader);
 
     let start_token = token_iter
         .next_token()

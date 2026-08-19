@@ -26,14 +26,14 @@ pub enum Token {
 }
 
 pub struct TokenIter<'a> {
-    reader: BufReader<&'a mut File>,
+    reader: &'a mut BufReader<File>,
     queue: VecDeque<Token>,
 }
 
 impl<'a> TokenIter<'a> {
-    pub fn new(file: &'a mut File) -> Self {
+    pub fn new(reader: &'a mut BufReader<File>) -> Self {
         Self {
-            reader: BufReader::new(file),
+            reader,
             queue: VecDeque::new(),
         }
     }

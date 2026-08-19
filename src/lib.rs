@@ -13,7 +13,11 @@ pub mod paper {
 
     pub struct Paper {
         filename: String,
-        file: BufReader<File>,
+        reader: BufReader<File>,
+        pub data: Option<PdfData>,
+    }
+
+    pub struct PdfData {
         pub version: String,
     }
 
@@ -51,25 +55,29 @@ pub mod paper {
             let filename = filename.into();
             let mut file = File::open(&filename)?;
 
-            let version = Self::read_header(&file)?;
-
-            let xref_offset = Self::find_xref_start(&mut file)?;
-
-            let xref_table = Self::read_xref_table(&mut file, xref_offset);
-
             Ok(Self {
                 filename,
-                file: BufReader::new(file),
-                version,
+                reader: BufReader::new(file),
+                data: None,
             })
         }
 
-        pub fn read_header(file: &File) -> io::Result<String> {
+        pub fn extract(&mut self) -> io::Result<()> {
+            let version = self.read_header()?;
+
+            let xref_offset = self.find_xref_start()?;
+
+            let xref_table = self.read_xref_table(xref_offset)?;
+
+            self.data = Some(PdfData { version: version });
+            Ok(())
+        }
+
+        pub fn read_header(&mut self) -> io::Result<String> {
             // read first line
-            let mut reader = BufReader::new(file);
             let mut version_line = String::new();
 
-            if reader.read_line(&mut version_line)? == 0 {
+            if self.reader.read_line(&mut version_line)? == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "file is empty",
@@ -87,13 +95,13 @@ pub mod paper {
             return Ok(version);
         }
 
-        pub fn find_xref_start(file: &mut File) -> io::Result<u64> {
-            let file_len = file.seek(SeekFrom::End(0))?;
+        pub fn find_xref_start(&mut self) -> io::Result<u64> {
+            let file_len = self.reader.seek(SeekFrom::End(0))?;
             let window = file_len.min(64 * 1024);
-            file.seek(SeekFrom::End(-(window as i64)))?;
+            self.reader.seek(SeekFrom::End(-(window as i64)))?;
 
             let mut tail = vec![0; window as usize];
-            file.read_exact(&mut tail)?;
+            self.reader.read_exact(&mut tail)?;
 
             let marker = b"startxref";
             let pos = tail
@@ -115,15 +123,14 @@ pub mod paper {
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid xref offset"))
         }
 
-        pub fn read_xref_table(file: &mut File, start_xref: u64) -> io::Result<XRefTable> {
-            file.seek(SeekFrom::Start(start_xref))?;
+        pub fn read_xref_table(&mut self, start_xref: u64) -> io::Result<XRefTable> {
+            self.reader.seek(SeekFrom::Start(start_xref))?;
 
             let mut xref_table = XRefTable::new();
-            let mut reader = BufReader::new(file);
 
             let mut line_buf = String::new();
-            let _ = reader.skip_until(b'\n');
-            if reader.read_line(&mut line_buf)? == 0 {
+            let _ = self.reader.skip_until(b'\n');
+            if self.reader.read_line(&mut line_buf)? == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "Unexpected end of file",
@@ -153,7 +160,7 @@ pub mod paper {
 
             for _ in first_obj_num..first_obj_num + num_entries {
                 line_buf.clear();
-                if reader.read_line(&mut line_buf)? == 0 {
+                if self.reader.read_line(&mut line_buf)? == 0 {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "Unexpected end of file",
@@ -206,11 +213,10 @@ pub mod paper {
             return Ok(xref_table);
         }
 
-        pub fn read_trailer(mut file: &mut File) -> io::Result<Dictionary> {
-            let mut reader = BufReader::new(&mut file);
-            reader.seek_relative(-100)?;
+        pub fn read_trailer(&mut self) -> io::Result<Dictionary> {
+            self.reader.seek_relative(-100)?;
 
-            let mut lines = reader.lines();
+            let mut lines = self.reader.by_ref().lines();
 
             while let Some(line) = lines.next() {
                 let line = line?;
@@ -226,7 +232,7 @@ pub mod paper {
                 ));
             }
 
-            match parser::parse_dictionary(file) {
+            match parser::parse_dictionary(self.reader.by_ref()) {
                 Err(ParseError::IOError(e)) => Err(e),
                 Err(other) => panic!("{}", other),
                 Ok(dict) => Ok(dict),
