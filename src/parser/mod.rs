@@ -3,6 +3,7 @@ mod tokens;
 use crate::paper::{Dictionary, ObjectRef, PdfObject};
 use crate::parser::ParseError::UnexpectedEndOfTokens;
 use crate::parser::tokens::{Token, TokenIter};
+use std::fmt::Display;
 use std::fs::File;
 use std::io;
 
@@ -11,6 +12,12 @@ pub enum ParseError {
     UnexpectedToken,
     UnexpectedEndOfTokens,
     IOError(io::Error),
+}
+
+impl Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Parse Error: {}", self.to_string())
+    }
 }
 
 pub type ParseResult<T> = Result<T, ParseError>;
@@ -66,6 +73,9 @@ pub fn parse_pdf_object(token_iter: &mut TokenIter) -> ParseResult<PdfObject> {
                     }
                 };
             }
+            Token::ArrayStart => {
+                return Ok(PdfObject::Array(parse_array(token_iter)?));
+            }
             // Boolean(p) => todo!("add boolean to PdfObject"),
             _ => (),
         }
@@ -81,6 +91,29 @@ fn to_parse_result<T>(token_result: io::Result<T>) -> ParseResult<T> {
         Err(io_err) => Err(ParseError::IOError(io_err))?,
         Ok(optional_token) => Ok(optional_token),
     }
+}
+
+fn parse_array(token_iter: &mut TokenIter) -> ParseResult<Vec<PdfObject>> {
+    let first_token =
+        to_parse_result(token_iter.next_token())?.ok_or(ParseError::UnexpectedEndOfTokens)?;
+    match first_token {
+        Token::ArrayStart => (),
+        _ => {
+            return Err(ParseError::UnexpectedToken);
+        }
+    }
+
+    let mut arr: Vec<PdfObject> = Vec::new();
+    loop {
+        let next_token = to_parse_result(token_iter.peek_next_token())?.cloned();
+        match next_token {
+            None => return Err(ParseError::UnexpectedEndOfTokens),
+            Some(Token::ArrayEnd) => break,
+            _ => arr.push(parse_pdf_object(token_iter)?),
+        }
+    }
+
+    Ok(arr)
 }
 
 fn parse_object_reference(token_iter: &mut TokenIter) -> ParseResult<ObjectRef> {

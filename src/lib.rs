@@ -17,14 +17,18 @@ pub mod paper {
         pub version: String,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq, Eq)]
     pub struct ObjectRef {
         pub object_number: isize,
         pub generation_number: isize,
     }
 
+    #[derive(Debug, PartialEq, Eq)]
     pub enum PdfObject {
         ObjectRef(ObjectRef),
+        StringLiteral(String),
+        HexString(String),
+        Array(Vec<PdfObject>),
         Integer(isize),
     }
 
@@ -155,6 +159,7 @@ pub mod paper {
                         "Unexpected end of file",
                     ));
                 }
+                dbg!(&line_buf);
                 let mut iter = line_buf.split_whitespace();
                 let offset = iter
                     .next()
@@ -202,12 +207,14 @@ pub mod paper {
         }
 
         pub fn read_trailer(mut file: &mut File) -> io::Result<Dictionary> {
-            let reader = BufReader::new(&mut file);
+            let mut reader = BufReader::new(&mut file);
+            reader.seek_relative(-100)?;
 
             let mut lines = reader.lines();
 
             while let Some(line) = lines.next() {
                 let line = line?;
+                dbg!(&line);
                 if line.trim() == "trailer" {
                     break;
                 }
