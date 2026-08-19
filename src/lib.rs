@@ -1,10 +1,15 @@
+pub mod parser;
+#[cfg(test)]
+pub mod tests;
+
 pub mod paper {
-    use regex::Regex;
     use std::collections::HashMap;
     use std::fs::File;
-    use std::io::{self, BufRead, BufReader, Read, Result, Seek, SeekFrom};
+    use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 
     use crate::paper::XRefEntryType::{Free, InUse};
+    use crate::parser;
+    use crate::parser::ParseError;
 
     pub struct Paper {
         filename: String,
@@ -13,29 +18,28 @@ pub mod paper {
     }
 
     #[derive(Debug)]
-    struct ObjectRef {
-        object_number: usize,
-        generation_number: usize,
+    pub struct ObjectRef {
+        pub object_number: isize,
+        pub generation_number: isize,
     }
 
-    #[derive(Debug)]
-    enum TrailerValue {
-        Int(u32),
-        Ref(ObjectRef),
+    pub enum PdfObject {
+        ObjectRef(ObjectRef),
+        Integer(isize),
     }
 
-    enum XRefEntryType {
+    pub enum XRefEntryType {
         InUse,
         Free,
     }
 
-    struct XRefTableEntry {
-        offset: usize,
-        generation_number: usize,
-        status_flag: XRefEntryType,
+    pub struct XRefTableEntry {
+        pub offset: usize,
+        pub generation_number: usize,
+        pub status_flag: XRefEntryType,
     }
     type XRefTable = Vec<XRefTableEntry>;
-    type Trailer = HashMap<String, TrailerValue>;
+    pub type Dictionary = HashMap<String, PdfObject>;
 
     impl Paper {
         pub fn open(filename: impl Into<String>) -> io::Result<Self> {
@@ -56,7 +60,7 @@ pub mod paper {
             })
         }
 
-        fn read_header(file: &File) -> io::Result<String> {
+        pub fn read_header(file: &File) -> io::Result<String> {
             // read first line
             let mut reader = BufReader::new(file);
             let mut version_line = String::new();
@@ -79,7 +83,7 @@ pub mod paper {
             return Ok(version);
         }
 
-        fn find_xref_start(file: &mut File) -> io::Result<u64> {
+        pub fn find_xref_start(file: &mut File) -> io::Result<u64> {
             let file_len = file.seek(SeekFrom::End(0))?;
             let window = file_len.min(64 * 1024);
             file.seek(SeekFrom::End(-(window as i64)))?;
@@ -107,7 +111,7 @@ pub mod paper {
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid xref offset"))
         }
 
-        fn read_xref_table(file: &mut File, start_xref: u64) -> io::Result<XRefTable> {
+        pub fn read_xref_table(file: &mut File, start_xref: u64) -> io::Result<XRefTable> {
             file.seek(SeekFrom::Start(start_xref))?;
 
             let mut xref_table = XRefTable::new();
@@ -197,59 +201,28 @@ pub mod paper {
             return Ok(xref_table);
         }
 
-        fn read_trailer(file: &mut File) -> io::Result<Trailer> {
-            todo!("implement")
-        }
-    }
+        pub fn read_trailer(mut file: &mut File) -> io::Result<Dictionary> {
+            let reader = BufReader::new(&mut file);
 
-    #[cfg(test)]
-    mod tests {
-        use crate::paper::Paper;
-        use std::fs::File;
+            let mut lines = reader.lines();
 
-        #[test]
-        fn opens_valid_pdf() {
-            let paper =
-                Paper::open("testdata/001-trivial/minimal-document.pdf").expect("PDF should open");
+            while let Some(line) = lines.next() {
+                let line = line?;
+                if line.trim() == "trailer" {
+                    break;
+                }
+            }
+            if lines.next().is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "No trailer found, must only call this function while pointer offset is before trailer keyword",
+                ));
+            }
 
-            assert_eq!(paper.version, "%PDF-1.5");
-        }
-
-        #[test]
-        fn parses_xref_offset() {
-            let mut file =
-                File::open("testdata/001-trivial/minimal-document.pdf").expect("PDF should open");
-            let xref_offset = Paper::find_xref_start(&mut file).unwrap();
-
-            assert_eq!(xref_offset, 16675);
-        }
-
-        #[test]
-        fn parses_plain_xref_table() {
-            let mut file = File::open("testdata/008-reportlab-inline-image/inline-image.pdf")
-                .expect("PDF should open");
-            let xref_offset = Paper::find_xref_start(&mut file).unwrap();
-            let xref_table =
-                Paper::read_xref_table(&mut file, xref_offset).expect("xref table should parse");
-
-            let expected = [
-                (0, 65535, true),
-                (73, 0, false),
-                (104, 0, false),
-                (211, 0, false),
-                (414, 0, false),
-                (482, 0, false),
-                (778, 0, false),
-                (837, 0, false),
-            ];
-            assert_eq!(xref_table.len(), expected.len());
-            for (entry, (offset, generation_number, is_free)) in xref_table.iter().zip(expected) {
-                assert_eq!(entry.offset, offset);
-                assert_eq!(entry.generation_number, generation_number);
-                assert_eq!(
-                    matches!(&entry.status_flag, super::XRefEntryType::Free),
-                    is_free
-                );
+            match parser::parse_dictionary(file) {
+                Err(ParseError::IOError(e)) => Err(e),
+                Err(other) => panic!("{}", other),
+                Ok(dict) => Ok(dict),
             }
         }
     }
