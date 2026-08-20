@@ -72,11 +72,14 @@ pub fn parse_pdf_object(token_iter: &mut TokenIter) -> ParseResult<PdfObject> {
                 return {
                     let next_token = to_parse_result(token_iter.peek_nth_token(2))?.cloned();
                     match next_token {
-                        None => Ok(PdfObject::Integer(x)),
+                        None => Err(ParseError::UnexpectedEndOfTokens),
                         Some(Token::Integer(_)) => {
                             Ok(PdfObject::ObjectRef(parse_object_reference(token_iter)?))
                         }
-                        Some(_) => todo!("implement"),
+                        Some(_) => {
+                            to_parse_result(token_iter.next_token())?;
+                            return Ok(PdfObject::Integer(x));
+                        }
                     }
                 };
             }

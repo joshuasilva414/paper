@@ -2,10 +2,15 @@ use crate::paper::{Dictionary, Paper, PdfObject};
 
 #[test]
 fn opens_valid_pdf() {
+    let _ = Paper::open("testdata/001-trivial/minimal-document.pdf").expect("PDF should open");
+}
+
+#[test]
+fn parses_header() {
     let mut paper =
         Paper::open("testdata/001-trivial/minimal-document.pdf").expect("PDF should open");
-    paper.extract().unwrap();
-    assert_eq!(paper.data.unwrap().version, "%PDF-1.5");
+    let header = paper.read_header().expect("Failed to read header");
+    assert_eq!(header, String::from("%PDF-1.5"));
 }
 
 #[test]

@@ -189,6 +189,7 @@ impl<'a> TokenIter<'a> {
 
     fn read_hex_string(&mut self, mut token: Vec<u8>) -> io::Result<Token> {
         self.reader.read_until(b'>', &mut token)?;
+        token.pop();
         Ok(Token::HexString(token))
     }
 

@@ -12,7 +12,7 @@ pub mod paper {
     use crate::parser::ParseError;
 
     pub struct Paper {
-        filename: String,
+        _filename: String,
         reader: BufReader<File>,
         pub data: Option<PdfData>,
     }
@@ -53,10 +53,10 @@ pub mod paper {
         pub fn open(filename: impl Into<String>) -> io::Result<Self> {
             // open file
             let filename = filename.into();
-            let mut file = File::open(&filename)?;
+            let file = File::open(&filename)?;
 
             Ok(Self {
-                filename,
+                _filename: filename,
                 reader: BufReader::new(file),
                 data: None,
             })
