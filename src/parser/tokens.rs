@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Read};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Token {
     Boolean(bool),
     Integer(isize),
@@ -23,6 +23,28 @@ pub enum Token {
 
     Comment(Vec<u8>),
     Eof,
+}
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Boolean(value) => write!(f, "{value}"),
+            Token::Integer(value) => write!(f, "{value}"),
+            Token::Real(value) => write!(f, "{value}"),
+            Token::LiteralString(value) => write!(f, "({})", String::from_utf8_lossy(value)),
+            Token::HexString(value) => write!(f, "<{}", String::from_utf8_lossy(value)),
+            Token::Name(value) => write!(f, "/{}", String::from_utf8_lossy(value)),
+            Token::ArrayStart => f.write_str("["),
+            Token::ArrayEnd => f.write_str("]"),
+            Token::DictionaryStart => f.write_str("<<"),
+            Token::DictionaryEnd => f.write_str(">>"),
+            Token::Null => f.write_str("null"),
+            Token::Keyword(value) => f.write_str(&String::from_utf8_lossy(value)),
+            Token::R => f.write_str("R"),
+            Token::Comment(value) => write!(f, "%{}", String::from_utf8_lossy(value)),
+            Token::Eof => f.write_str("EOF"),
+        }
+    }
 }
 
 pub struct TokenIter<'a> {
@@ -74,7 +96,11 @@ impl<'a> TokenIter<'a> {
 
         loop {
             if let Some(next_byte) = bytes.next() {
-                buf.push(next_byte?);
+                let byte = next_byte?;
+                if buf.is_empty() && byte.is_ascii_whitespace() {
+                    continue;
+                }
+                buf.push(byte);
             } else {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -87,12 +113,73 @@ impl<'a> TokenIter<'a> {
             if let Some(token) = token {
                 return match token {
                     Token::LiteralString(tok) => Ok(Some(self.read_literal_string(tok)?)),
-                    Token::HexString(tok) => Ok(Some(self.read_hex_string(tok)?)),
+                    Token::HexString(tok) => {
+                        if let Some(next_byte) = bytes.next() {
+                            let byte = next_byte?;
+                            if buf.is_empty() && byte.is_ascii_whitespace() {
+                                continue;
+                            }
+                            buf.push(byte);
+                        } else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "Ran out of bytes parsing token",
+                            ));
+                        }
+                        match Self::match_token(buf.as_slice()) {
+                            Some(Token::DictionaryStart) => Ok(Some(Token::DictionaryStart)),
+                            None => {
+                                self.reader.seek_relative(-1)?;
+                                Ok(Some(self.read_hex_string(tok)?))
+                            }
+                            Some(_) => Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("token buffer has {}", String::from_utf8(buf).unwrap()),
+                            )),
+                        }
+                    }
+                    Token::Integer(_) => Ok(Some(self.read_integer(buf)?)),
+                    Token::Comment(tok) => Ok(Some(self.read_comment(tok)?)),
                     Token::Name(tok) => Ok(Some(self.read_name(tok)?)),
-                    _ => Ok(Some(token)),
+                    tok => Ok(Some(tok)),
                 };
             }
         }
+    }
+
+    fn read_integer(&mut self, mut buf: Vec<u8>) -> io::Result<Token> {
+        loop {
+            let available = self.reader.fill_buf()?;
+
+            if available.is_empty() {
+                break;
+            }
+
+            let digit_count = available
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
+            let has_non_digit = digit_count < available.len();
+
+            buf.extend_from_slice(&available[..digit_count]);
+            self.reader.consume(digit_count);
+
+            if has_non_digit {
+                break;
+            }
+        }
+
+        let text = std::str::from_utf8(&buf)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+        let value = text.parse::<isize>().map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid integer {text:?}: {error}"),
+            )
+        })?;
+
+        Ok(Token::Integer(value))
     }
 
     fn read_literal_string(&mut self, mut token: Vec<u8>) -> io::Result<Token> {
@@ -103,6 +190,11 @@ impl<'a> TokenIter<'a> {
     fn read_hex_string(&mut self, mut token: Vec<u8>) -> io::Result<Token> {
         self.reader.read_until(b'>', &mut token)?;
         Ok(Token::HexString(token))
+    }
+
+    fn read_comment(&mut self, mut token: Vec<u8>) -> io::Result<Token> {
+        self.reader.read_until(b'\n', &mut token)?;
+        Ok(Token::Comment(token))
     }
 
     fn read_name(&mut self, mut token: Vec<u8>) -> io::Result<Token> {
@@ -117,7 +209,7 @@ impl<'a> TokenIter<'a> {
                 }
             }
         }
-        Ok(Token::LiteralString(token))
+        Ok(Token::Name(token))
     }
 
     fn match_token(buf: &[u8]) -> Option<Token> {
@@ -130,7 +222,10 @@ impl<'a> TokenIter<'a> {
             b"(" => Some(Token::LiteralString(Vec::new())),
             b"<" => Some(Token::HexString(Vec::new())),
             b"R" => Some(Token::R),
-            x if (x[0] as char).is_whitespace() => None,
+            b"%" => Some(Token::Comment(Vec::new())),
+            x if !x.is_empty() && (x[0].is_ascii_digit() || x[0] == b'.' || x[0] == b'-') => {
+                Some(Token::Integer(0))
+            }
             _ => None,
         }
     }

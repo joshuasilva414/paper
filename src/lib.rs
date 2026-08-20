@@ -31,7 +31,7 @@ pub mod paper {
     pub enum PdfObject {
         ObjectRef(ObjectRef),
         StringLiteral(String),
-        HexString(String),
+        HexString(Vec<u8>),
         Array(Vec<PdfObject>),
         Integer(isize),
     }
@@ -67,7 +67,7 @@ pub mod paper {
 
             let xref_offset = self.find_xref_start()?;
 
-            let xref_table = self.read_xref_table(xref_offset)?;
+            let _ = self.read_xref_table(xref_offset)?;
 
             self.data = Some(PdfData { version: version });
             Ok(())
@@ -166,7 +166,7 @@ pub mod paper {
                         "Unexpected end of file",
                     ));
                 }
-                dbg!(&line_buf);
+                // dbg!(&line_buf);
                 let mut iter = line_buf.split_whitespace();
                 let offset = iter
                     .next()
@@ -214,18 +214,17 @@ pub mod paper {
         }
 
         pub fn read_trailer(&mut self) -> io::Result<Dictionary> {
-            self.reader.seek_relative(-100)?;
-
             let mut lines = self.reader.by_ref().lines();
 
+            let mut trailer_found = false;
             while let Some(line) = lines.next() {
                 let line = line?;
-                dbg!(&line);
                 if line.trim() == "trailer" {
+                    trailer_found = true;
                     break;
                 }
             }
-            if lines.next().is_none() {
+            if !trailer_found {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "No trailer found, must only call this function while pointer offset is before trailer keyword",
@@ -234,7 +233,7 @@ pub mod paper {
 
             match parser::parse_dictionary(self.reader.by_ref()) {
                 Err(ParseError::IOError(e)) => Err(e),
-                Err(other) => panic!("{}", other),
+                Err(other) => Err(io::Error::new(io::ErrorKind::Other, other.to_string())),
                 Ok(dict) => Ok(dict),
             }
         }

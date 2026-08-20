@@ -56,16 +56,14 @@ fn parses_plain_trailer_dictionary() {
     let _ = paper
         .read_xref_table(xref_offset)
         .expect("xref table should parse");
-
     let trailer = paper.read_trailer().unwrap();
-
     assert_eq!(
         Dictionary::from([
             (
                 String::from("ID"),
                 PdfObject::Array(vec![
-                    PdfObject::HexString(String::from("e592e1aa567158bd21e449678b7a736a")),
-                    PdfObject::HexString(String::from("e592e1aa567158bd21e449678b7a736a"))
+                    PdfObject::HexString(Vec::from(b"e592e1aa567158bd21e449678b7a736a")),
+                    PdfObject::HexString(Vec::from(b"e592e1aa567158bd21e449678b7a736a"))
                 ])
             ),
             (

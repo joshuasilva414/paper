@@ -8,14 +8,20 @@ use std::io::{self, BufReader};
 
 #[derive(Debug)]
 pub enum ParseError {
-    UnexpectedToken,
+    UnexpectedToken(Token),
     UnexpectedEndOfTokens,
     IOError(io::Error),
+    Other,
 }
 
 impl Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Parse Error: {}", self.to_string())
+        match self {
+            ParseError::UnexpectedToken(t) => write!(f, "unexpected token {}", t),
+            ParseError::UnexpectedEndOfTokens => write!(f, "unexected end of tokens!"),
+            ParseError::IOError(error) => write!(f, "IO Error: {error}"),
+            ParseError::Other => write!(f, "unknown parsing error"),
+        }
     }
 }
 
@@ -29,7 +35,8 @@ pub fn parse_dictionary(reader: &mut BufReader<File>) -> Result<Dictionary, Pars
         .map_err(|e| ParseError::IOError(e))?;
     match start_token {
         Some(Token::DictionaryStart) => (),
-        _ => return Err(ParseError::UnexpectedToken),
+        Some(token) => return Err(ParseError::UnexpectedToken(token)),
+        None => return Err(ParseError::UnexpectedEndOfTokens),
     }
 
     let mut dictionary = Dictionary::new();
@@ -40,10 +47,11 @@ pub fn parse_dictionary(reader: &mut BufReader<File>) -> Result<Dictionary, Pars
             .map_err(|e| ParseError::IOError(e))?;
         let key;
         match next_token {
+            Some(Token::Comment(_)) => continue,
             None => return Err(ParseError::UnexpectedEndOfTokens),
             Some(Token::DictionaryEnd) => break,
             Some(Token::Name(name_value)) => key = name_value,
-            Some(_) => return Err(ParseError::UnexpectedToken),
+            Some(tok) => return Err(ParseError::UnexpectedToken(tok)),
         }
 
         // Read Value
@@ -53,7 +61,7 @@ pub fn parse_dictionary(reader: &mut BufReader<File>) -> Result<Dictionary, Pars
         dictionary.insert(String::from_utf8(key).unwrap(), value);
     }
 
-    Err(ParseError::UnexpectedToken)
+    Ok(dictionary)
 }
 
 pub fn parse_pdf_object(token_iter: &mut TokenIter) -> ParseResult<PdfObject> {
@@ -75,14 +83,14 @@ pub fn parse_pdf_object(token_iter: &mut TokenIter) -> ParseResult<PdfObject> {
             Token::ArrayStart => {
                 return Ok(PdfObject::Array(parse_array(token_iter)?));
             }
-            // Boolean(p) => todo!("add boolean to PdfObject"),
-            _ => (),
+            Token::HexString(s) => {
+                to_parse_result(token_iter.next_token())?;
+                return Ok(PdfObject::HexString(s));
+            }
+            tok => return Err(ParseError::UnexpectedToken(tok)),
         }
-    } else {
-        return Err(ParseError::UnexpectedEndOfTokens);
     }
-
-    Err(ParseError::UnexpectedToken)
+    Err(ParseError::UnexpectedEndOfTokens)
 }
 
 fn to_parse_result<T>(token_result: io::Result<T>) -> ParseResult<T> {
@@ -97,8 +105,8 @@ fn parse_array(token_iter: &mut TokenIter) -> ParseResult<Vec<PdfObject>> {
         to_parse_result(token_iter.next_token())?.ok_or(ParseError::UnexpectedEndOfTokens)?;
     match first_token {
         Token::ArrayStart => (),
-        _ => {
-            return Err(ParseError::UnexpectedToken);
+        tok => {
+            return Err(ParseError::UnexpectedToken(tok));
         }
     }
 
@@ -107,7 +115,10 @@ fn parse_array(token_iter: &mut TokenIter) -> ParseResult<Vec<PdfObject>> {
         let next_token = to_parse_result(token_iter.peek_next_token())?.cloned();
         match next_token {
             None => return Err(ParseError::UnexpectedEndOfTokens),
-            Some(Token::ArrayEnd) => break,
+            Some(Token::ArrayEnd) => {
+                to_parse_result(token_iter.next_token())?;
+                break;
+            }
             _ => arr.push(parse_pdf_object(token_iter)?),
         }
     }
@@ -129,6 +140,6 @@ fn parse_object_reference(token_iter: &mut TokenIter) -> ParseResult<ObjectRef> 
                 generation_number,
             })
         }
-        _ => Err(ParseError::UnexpectedToken),
+        _ => Err(ParseError::Other),
     }
 }
